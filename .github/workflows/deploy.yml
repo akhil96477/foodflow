@@ -8,18 +8,23 @@ on:
 env:
   AWS_REGION: us-east-1
   EKS_CLUSTER_NAME: foodiefy-eks-cluster
-  ECR_REPOSITORY_FRONTEND: foodiefy-frontend
-  ECR_REPOSITORY_BACKEND: foodiefy-backend
+  BACKEND_IMAGE_NAME: 344121726204.dkr.ecr.us-east-1.amazonaws.com/foodiefy-backend
+  FRONTEND_IMAGE_NAME: 344121726204.dkr.ecr.us-east-1.amazonaws.com/foodiefy-frontend
 
 jobs:
-  build-and-deploy:
+  deploy:
+    name: Build, Push, and Deploy
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -27,43 +32,25 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push Backend Image to Amazon ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      - name: Build and push backend image
         run: |
-          cd backend
-          mvn clean package -DskipTests
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:${{ github.sha }} .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:${{ github.sha }}
+          docker build -t $BACKEND_IMAGE_NAME:${{ github.sha }} -t $BACKEND_IMAGE_NAME:latest ./backend
+          docker push $BACKEND_IMAGE_NAME:${{ github.sha }}
+          docker push $BACKEND_IMAGE_NAME:latest
 
-      - name: Build, tag, and push Frontend Image to Amazon ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      - name: Build and push frontend image
         run: |
-          cd frontend
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:${{ github.sha }} .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:${{ github.sha }}
+          docker build -t $FRONTEND_IMAGE_NAME:${{ github.sha }} -t $FRONTEND_IMAGE_NAME:latest ./frontend
+          docker push $FRONTEND_IMAGE_NAME:${{ github.sha }}
+          docker push $FRONTEND_IMAGE_NAME:latest
 
-      - name: Update kubeconfig
-        run: aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_REGION
+      - name: Update KubeConfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
-      - name: Update Deployment File (Image Tags)
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      - name: Deploy to EKS
         run: |
-          sed -i "s|image: foodflow-backend:.*|image: $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:${{ github.sha }}|" k8s/deployment.yaml
-          sed -i "s|image: foodflow-frontend:.*|image: $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:${{ github.sha }}|" k8s/deployment.yaml
-
-      - name: Deploy to Amazon EKS
-        run: |
-          kubectl apply -f k8s/secret.yaml
-          kubectl apply -f k8s/mysql-stateful.yaml
-          kubectl apply -f k8s/config.yaml
-          kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/service.yaml
-          kubectl apply -f k8s/ingress.yaml
-
-      - name: Verify Deployment
-        run: kubectl rollout status deployment/backend -n food-app
+          kubectl apply -f k8s/
+          kubectl rollout restart deployment backend -n food-app
+          kubectl rollout restart deployment frontend -n food-app
