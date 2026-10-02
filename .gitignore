@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.DS_Store
+target/
+*.jar
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+.idea/
+.vscode/
